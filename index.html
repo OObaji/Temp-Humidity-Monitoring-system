@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MQTT Connection Test</title>
+    <!-- 1. Load Paho MQTT Client -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+</head>
+<body>
+    <h1>MQTT Connection Test</h1>
+    <p>Open your browser's "Developer Console" (F12) to see connection logs.</p>
+    <p>Connection Status: <b id="status">Connecting...</b></p>
+    <hr>
+    <h3>Received Messages:</h3>
+    <pre id="messages" style="background-color: #f4f4f4; border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: scroll;"></pre>
+
+    <script>
+        // --- Configuration ---
+        // !!! IMPORTANT: These MUST match your Arduino code !!!
+        const MQTT_BROKER = "broker.hivemq.com";
+        const MQTT_PORT = 8000; // WebSocket Port
+        
+        // !!! 
+        // !!! CHANGE THIS to your Arduino's topic!!!
+        // !!!
+        const MQTT_TOPIC = "hope/iot_project/student181"; 
+        
+        const MQTT_CLIENT_ID = "web-test-" + Math.floor(Math.random() * 100000);
+        // --- End Configuration ---
+
+        const statusEl = document.getElementById('status');
+        const messagesEl = document.getElementById('messages');
+
+        const client = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, MQTT_CLIENT_ID);
+
+        client.onConnectionLost = onConnectionLost;
+        client.onMessageArrived = onMessageArrived;
+
+        function startConnect() {
+            statusEl.innerText = "Connecting...";
+            console.log("Connecting to MQTT...");
+            client.connect({
+                onSuccess: onConnect,
+                onFailure: (err) => { 
+                    console.error("Connection failed:", err);
+                    statusEl.innerText = `Connection Failed! ${err.errorMessage}. Retrying...`;
+                    setTimeout(startConnect, 5000);
+                },
+                useSSL: false
+            });
+        }
+
+        function onConnect() {
+            statusEl.innerText = "Connected! Subscribing...";
+            console.log("Connected to MQTT!");
+            client.subscribe(MQTT_TOPIC);
+            console.log("Subscribed to:", MQTT_TOPIC);
+            statusEl.innerText = `Connected! Subscribed to ${MQTT_TOPIC}`;
+        }
+
+        function onConnectionLost(responseObject) {
+            if (responseObject.errorCode !== 0) {
+                console.log("Connection lost:", responseObject.errorMessage);
+            }
+            statusEl.innerText = "Connection Lost! Retrying...";
+            setTimeout(startConnect, 5000);
+        }
+
+        function onMessageArrived(message) {
+            const payload = message.payloadString;
+            console.log("Message arrived:", payload);
+            
+            // Add the new message to the top of the list
+            messagesEl.innerHTML = `[${new Date().toLocaleTimeString()}] ${payload}\n` + messagesEl.innerHTML;
+        }
+
+        // Start the connection
+        startConnect();
+    </script>
+</body>
+</html>
