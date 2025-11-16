@@ -14,6 +14,9 @@
     <!-- 3. Load Lucide icons (Vector Icons) -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
+    <!-- 4. Load Paho MQTT over WebSockets (for real-time data) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+
     <style>
         /* (CSS styles remain the same for aesthetics and responsiveness) */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
@@ -476,6 +479,16 @@
         let MAX_TEMP = 26.0;
         let MAX_HUMIDITY = 60.0;
         
+        // --- MQTT CONFIGURATION ---
+        const MQTT_BROKER     = "broker.hivemq.com";
+        const MQTT_PORT       = 8000;  // WebSocket port for HiveMQ public broker
+        const MQTT_TOPIC      = "hope/iot_project/student123"; // same as Arduino publish topic
+        const MQTT_CLIENT_ID  = "webdash_" + Math.random().toString(16).slice(2, 8);
+
+        let mqttClient = null;          // Paho client instance
+        let simulateIntervalId = null;  // optional fallback simulator timer
+        
+
         // ALERT STATE VARIABLE
         let isAlertActive = false;
         
@@ -584,6 +597,78 @@
             });
         }
 
+
+                // --- MQTT INITIALISATION & CALLBACKS (NEW) ---
+        function initMqtt() {
+            // Update UI to show we're trying to connect
+            connStatusText.innerText = "Connecting to MQTT...";
+            connStatusDot.classList.remove("bg-slate-400", "bg-red-500");
+            connStatusDot.classList.add("bg-yellow-400");
+
+            // Create MQTT client instance (WebSocket)
+            mqttClient = new Paho.MQTT.Client(
+                MQTT_BROKER,
+                Number(MQTT_PORT),
+                MQTT_CLIENT_ID
+            );
+
+            // Called when the connection drops
+            mqttClient.onConnectionLost = (responseObject) => {
+                console.warn("MQTT connection lost:", responseObject.errorMessage);
+                connStatusText.innerText = "MQTT Disconnected";
+                connStatusDot.classList.remove("bg-green-500", "bg-yellow-400");
+                connStatusDot.classList.add("bg-red-500");
+
+                // OPTIONAL: fall back to simulated data if broker goes down
+                if (!simulateIntervalId) {
+                    simulateIntervalId = setInterval(simulateData, 2000);
+                }
+            };
+
+            // Called every time a message arrives on a subscribed topic
+            mqttClient.onMessageArrived = (message) => {
+                try {
+                    const payload = message.payloadString;
+                    const data = JSON.parse(payload);
+                    // Expecting: { temperature, humidity, status }
+                    updateLiveDashboard(data);
+                } catch (err) {
+                    console.error("Failed to parse MQTT payload:", err, message.payloadString);
+                }
+            };
+
+            // Now connect to the broker
+            mqttClient.connect({
+                useSSL: false, // set true if you later move to wss/secure endpoint
+                onSuccess: () => {
+                    console.log("MQTT connected");
+                    connStatusText.innerText = "MQTT Connected";
+                    connStatusDot.classList.remove("bg-slate-400", "bg-yellow-400", "bg-red-500");
+                    connStatusDot.classList.add("bg-green-500");
+
+                    // Stop any simulation if it is running
+                    if (simulateIntervalId) {
+                        clearInterval(simulateIntervalId);
+                        simulateIntervalId = null;
+                    }
+
+                    // Subscribe to the telemetry topic
+                    mqttClient.subscribe(MQTT_TOPIC);
+                    console.log("Subscribed to:", MQTT_TOPIC);
+                },
+                onFailure: (err) => {
+                    console.error("MQTT connect failed:", err.errorMessage);
+                    connStatusText.innerText = "MQTT Error";
+                    connStatusDot.classList.remove("bg-yellow-400", "bg-green-500");
+                    connStatusDot.classList.add("bg-red-500");
+
+                    // OPTIONAL: if we can't connect, fall back to simulated data
+                    if (!simulateIntervalId) {
+                        simulateIntervalId = setInterval(simulateData, 2000);
+                    }
+                }
+            });
+        }
 
         // --- Chart.js Gauge Config ---
         const createGaugeConfig = (color, maxVal) => ({
@@ -922,7 +1007,7 @@
         });
 
         
-        // --- Start the App ---
+                // --- Start the App ---
         document.addEventListener('DOMContentLoaded', () => {
             lucide.createIcons();
             loadThresholdSettings();
@@ -931,9 +1016,13 @@
             updateChartTheme();
             document.querySelector('.btn-chart[data-range="year"]').classList.add('btn-chart-active');
 
+            // Prefer real MQTT data:
+            initMqtt();
 
-            // Start static data loop
-            setInterval(simulateData, 2000);
+            // If MQTT connect fails, initMqtt() will start simulateData() as a fallback.
+            // If you want to force simulation only (for testing), comment out the line above
+            // and uncomment the line below:
+            // simulateIntervalId = setInterval(simulateData, 2000);
         });
     </script>
 </body>

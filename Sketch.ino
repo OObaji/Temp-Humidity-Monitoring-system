@@ -18,6 +18,7 @@
 #include <LiquidCrystal_I2C.h>
 #include "DHT.h"
 #include <WiFiS3.h> // RESTORED: Wi-Fi Library
+#include <ArduinoMqttClient.h> // RESTORED: MQTT Library
 // Removed: #include <Arduino_JSON.h>
 // Removed: #include <ArduinoMqttClient.h>
 
@@ -43,11 +44,26 @@ LiquidCrystal_I2C lcd(0x27, 20, 4); // Use 0x3F if 0x27 is blank
 const char* ssid = "iPhone";
 const char* password = "*Konami2003*";
 
+// --- 4b. MQTT CONFIGURATION ---
+const char mqttBroker[]   = "broker.hivemq.com";
+int        mqttPort       = 1883;                      // same as Python PORT
+const char mqttTopic[]    = "hope/iot_project/student123"; // same as TOPIC_TELEMETRY
+const char mqttClientId[] = "";     // any unique ID
+
+// Create WiFi + MQTT client objects
+WiFiClient wifiClient;
+MqttClient mqttClient(wifiClient);
+
+
 // --- 5. STATE VARIABLES ---
 unsigned long lastSensorReadMillis = 0; // Timer for sensor reads
 unsigned long lastBlinkMillis = 0;      // Timer for blinking
 bool redLedState = LOW;                 // Tracks the blink state
 String alertStatus = "normal";          // Global status tracker
+
+// --- 5b. FORWARD DECLARATIONS FOR MQTT HELPERS ---
+void connectToMqtt();
+void publishSensorData(float temperature, float humidity, const String &status);
 
 // --- 6. SETUP FUNCTION (runs once) ---
 void setup() {
@@ -74,13 +90,36 @@ void setup() {
   Serial.println("WiFi Connected!");
   // --- END WI-FI SETUP ---
   
-  Serial.println("System Ready: Local Mode");
+  // --- MQTT SETUP ---
+  mqttClient.setId(mqttClientId);   // use our chosen client ID
+  connectToMqtt();                  // try to connect to broker
+
+  Serial.println("System Ready: Local + MQTT Mode");
+
+  // Serial.println("System Ready: Local Mode"); // OLD: Replaced with Local + MQTT
+  
   delay(1000);
 }
 
 // --- 7. MAIN LOOP (runs forever) ---
 void loop() {
-  
+
+    // --- KEEP WIFI & MQTT CONNECTIONS ALIVE (NEW) ---
+  if (WiFi.status() != WL_CONNECTED) {
+    // Try to reconnect Wi-Fi if it drops
+    while (WiFi.begin(ssid, password) != WL_CONNECTED) {
+      Serial.print(".");
+      delay(500);
+    }
+    Serial.println("WiFi reconnected");
+  }
+
+  if (!mqttClient.connected()) {
+    connectToMqtt();  // Reconnect to MQTT broker if needed
+  }
+  mqttClient.poll();  // Process incoming/outgoing MQTT packets
+
+
   // --- SENSOR READING (Every 10 seconds) ---
   if (millis() - lastSensorReadMillis >= 10000) {
     lastSensorReadMillis = millis(); // Reset the timer
@@ -125,6 +164,8 @@ void loop() {
       Serial.print(humidity);
       Serial.print("%, Status=");
       Serial.println(alertStatus);
+
+      publishSensorData(temperature, humidity, alertStatus);
     }
   }
 
@@ -151,4 +192,48 @@ void loop() {
     digitalWrite(GREEN_LED_PIN, LOW);  // Green OFF
     digitalWrite(RED_LED_PIN, LOW);    // Red OFF
   }
+}
+
+
+// --- 8. MQTT HELPER FUNCTIONS (NEW) ---
+
+void connectToMqtt() {
+  Serial.print("Connecting to MQTT at ");
+  Serial.print(mqttBroker);
+  Serial.print(":");
+  Serial.println(mqttPort);
+
+  while (!mqttClient.connect(mqttBroker, mqttPort)) {
+    Serial.print("MQTT connect failed, error code = ");
+    Serial.println(mqttClient.connectError());
+    Serial.println("Retrying in 1 second...");
+    delay(1000);
+  }
+
+  Serial.println("MQTT Connected!");
+
+  // OPTIONAL: later you can subscribe to control topic here:
+  // mqttClient.subscribe("hope/iot_project/student123/cmd");
+}
+
+
+void publishSensorData(float temperature, float humidity, const String &status) {
+  // Build a JSON-like payload manually
+  String payload = "{";
+  payload += "\"temperature\":";
+  payload += String(temperature, 1);
+  payload += ",\"humidity\":";
+  payload += String(humidity, 1);
+  payload += ",\"status\":\"";
+  payload += status;
+  payload += "\"}";
+
+  Serial.print("Publishing to ");
+  Serial.print(mqttTopic);
+  Serial.print(" -> ");
+  Serial.println(payload);
+
+  mqttClient.beginMessage(mqttTopic);
+  mqttClient.print(payload);
+  mqttClient.endMessage();
 }
